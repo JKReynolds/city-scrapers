@@ -1,5 +1,6 @@
+import re
 from datetime import datetime
-
+import scrapy
 from city_scrapers_core.constants import COMMISSION
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
@@ -10,7 +11,9 @@ class ChiNorthwestHomeEquitySpider(CityScrapersSpider):
     agency = "Chicago Northwest Home Equity Assurance Program"
     timezone = "America/Chicago"
     allowed_domains = ["nwheap.com"]
-    start_urls = ["https://nwheap.com/category/meet-minutes-and-agendas/"]
+    start_urls = [
+        "https://nwheap.com/category/meet-minutes-and-agendas/page/2/",
+        ]
 
     # used to convert month to number month, help with mm/dd/yyyy formatting
     calendar = {
@@ -28,6 +31,13 @@ class ChiNorthwestHomeEquitySpider(CityScrapersSpider):
         "december": "12"
     }
 
+    # dictionary used to store the results
+    # key = date (mm/dd/yyyy)
+    # value = Meeting object
+    meetings = {
+
+    }
+
     def parse(self, response):
         """
         `parse` should always `yield` Meeting items.
@@ -35,162 +45,254 @@ class ChiNorthwestHomeEquitySpider(CityScrapersSpider):
         Change the `_parse_title`, `_parse_start`, etc methods to fit your scraping
         needs.
         """
-        """
-        The page contains a list of meetings minute, which are past meetings,
-        and upcomming meetings we parsed both sections and return the meetings
-        the best way we can.
-        """
-        futureMeetings = response.xpath("//aside[@id='em_widget-5']/ul/li[not(@class)]")
-        pastMeetings = response.xpath("//div[@class='post-loop-content']")
+        
+        # futureMeetings = response.xpath("//aside[@id='em_widget-5']/ul/li[not(@class)]")
+        meetMinutesAgendas = response.xpath("//div[@class='post-loop-content']")
 
-        # loop through the meetings minute (past meetings)
-        for post in pastMeetings:
-            meeting = Meeting(
-                title=self._parse_title(post, True),
-                description=self._parse_description(post, True),
-                classification=self._parse_classification(post),
-                start=self._parse_start(post, True, response),
-                end=self._parse_end(post, True, response),
-                all_day=self._parse_all_day(post, True),
-                time_notes=self._parse_time_notes(post, True),
-                location=self._parse_location(post, True, response),
-                links=self._parse_links(post, True),
-                source=self._parse_source(response)
+        # loop through the meet minutes and agenda contents
+        for item in meetMinutesAgendas:
+
+            #get the date
+            dateString = self._look_for_date(item)
+            self.meetings[dateString] = Meeting(
+                title=self._parse_minute_title(item),
+                description=self._parse_minute_description(item),
+                classification=self._parse_classification(item),
+                start=self._parse_minute_start(item, dateString),
+                # end=self._parse_end(post, True, response),
+                # all_day=self._parse_all_day(post, True),
+                # time_notes=self._parse_time_notes(post, True),
+                # location=self._parse_location(post, True, response),
+                # links=self._parse_links(post, True),
+                # source=self._parse_source(response)
             )
 
-            meeting["status"] = self._get_status(meeting)
-            meeting["id"] = self._get_id(meeting)
+            print(self.meetings[dateString])
 
-            yield meeting
+        # # loop through the meetings minute (past meetings)
+        # for post in pastMeetings:
+        #     meeting = Meeting(
+        #         title=self._parse_title(post, True),
+        #         description=self._parse_description(post, True),
+        #         classification=self._parse_classification(post),
+        #         start=self._parse_start(post, True, response),
+        #         end=self._parse_end(post, True, response),
+        #         all_day=self._parse_all_day(post, True),
+        #         time_notes=self._parse_time_notes(post, True),
+        #         location=self._parse_location(post, True, response),
+        #         links=self._parse_links(post, True),
+        #         source=self._parse_source(response)
+        #     )
 
-        # loop through the upcomming meetings
-        for post in futureMeetings:
-            meeting = Meeting(
-                title=self._parse_title(post, False),
-                description=self._parse_description(post, False),
-                classification=self._parse_classification(post),
-                start=self._parse_start(post, False, response),
-                end=self._parse_end(post, False, response),
-                all_day=self._parse_all_day(post, False),
-                location=self._parse_location(post, False, response),
-                links=self._parse_links(post, False),
-                source=self._parse_source(response)
-            )
+        #     meeting["status"] = self._get_status(meeting)
+        #     meeting["id"] = self._get_id(meeting)
 
-            meeting["status"] = self._get_status(meeting)
-            meeting["id"] = self._get_id(meeting)
+        #     yield meeting
 
-            yield meeting
+        # # loop through the upcomming meetings
+        # for post in futureMeetings:
+        #     meeting = Meeting(
+        #         title=self._parse_title(post, False),
+        #         description=self._parse_description(post, False),
+        #         classification=self._parse_classification(post),
+        #         start=self._parse_start(post, False, response),
+        #         end=self._parse_end(post, False, response),
+        #         all_day=self._parse_all_day(post, False),
+        #         location=self._parse_location(post, False, response),
+        #         links=self._parse_links(post, False),
+        #         source=self._parse_source(response)
+        #     )
 
-    """
-    To prevent rewriting the same functions for two cases (past/future),
-    we pass in an 'isPast' boolean to determine which case
-    """
-    def _parse_title(self, item, isPast):
-        """Parse or generate meeting title."""
-        if isPast:
-            title = item.xpath(".//h2[@class='entry-title']/a/text()").get()
-        else:
-            title = item.xpath("./a/text()").extract()[0]
+        #     meeting["status"] = self._get_status(meeting)
+        #     meeting["id"] = self._get_id(meeting)
 
-        return title
+        #     yield meeting
 
-    def _parse_description(self, item, isPast):
-        """Parse or generate meeting description."""
-        if isPast:
-            description = item.xpath("./div[@class='entry-content']/p/text()").get()
+    @classmethod
+    def from_crawler(cls, crawler, *args, **kwargs):
+        """ Overridden `from_crawler` to connect `spider_idle` signal. """
+        spider = super().from_crawler(crawler, *args, **kwargs)
+        crawler.signals.connect(spider.spider_idle, signal=scrapy.signals.spider_idle)
+        return spider
 
-            # some meeting minutes don't have descriptions
-            if not description:
-                description = ""
-        else:
-            # upcomming meetings don't have descriptions at all
-            description = ""
+    def spider_idle(self):
+        """ React to `spider_idle` signal by starting JSON parsing after _parse_minutes."""
+        self.crawler.signals.disconnect(self.spider_idle, signal=scrapy.signals.spider_idle)
+        self.crawler.engine.crawl(scrapy.Request("https://nwheap.com/events/", callback=self._end_parse), self)
+        raise scrapy.exceptions.DontCloseSpider
+    
+    def _end_parse(self, response):
+        print("******HELLLO")
 
-        return description
+    # function is used to look for the date in title or description
+    def _look_for_date(self, item):
+        title = item.xpath(".//h2[@class='entry-title']/a/text()").get()
+        description = item.xpath("./div[@class='entry-content']/p/text()").get()
+
+        #remove the punctuations and create array
+        title = re.sub(r'[^\w\s]',' ',title).split()
+        if description:
+            description = re.sub(r'[^\w\s]',' ',description).split()
+
+        dateString = ""
+
+        # search month in title
+        for i in range(len(title)):
+            if self.calendar.get(title[i].lower()):
+                dateString = self.calendar.get(title[i].lower())
+                #if the day and year the next 2 string
+                if title[i+1].isdigit() and title[i+2].isdigit():
+                    day = title[i+1]
+                    year = title[i+2]
+                    if len(day) < 2:
+                        dateString += "/0" + day + "/" + year
+                    else:
+                        dateString += "/" + day + "/" + year
+                    return dateString
+
+        # search month in description
+        for i in range(len(description)):
+            if self.calendar.get(description[i].lower()):
+                dateString = self.calendar.get(description[i].lower())
+                #if the day and year the next 2 string
+                if description[i+1].isdigit() and description[i+2].isdigit():
+                    day = description[i+1]
+                    year = description[i+2]
+                    if len(day) < 2:
+                        dateString += "/0" + day + "/" + year
+                    else:
+                        dateString += "/" + day + "/" + year
+                    return dateString
+
+    # used to parse minute title
+    def _parse_minute_title(self, item):
+        return item.xpath(".//h2[@class='entry-title']/a/text()").get()
+
+    def _parse_minute_description(self, item):
+        return item.xpath("./div[@class='entry-content']/p/text()").get()
+
+    # def _parse_title(self, item, isPast):
+    #     """Parse or generate meeting title."""
+    #     if isPast:
+    #         title = item.xpath(".//h2[@class='entry-title']/a/text()").get()
+    #     else:
+    #         title = item.xpath("./a/text()").extract()[0]
+
+    #     return title
+
+    # def _parse_description(self, item, isPast):
+    #     """Parse or generate meeting description."""
+    #     if isPast:
+    #         description = item.xpath("./div[@class='entry-content']/p/text()").get()
+
+    #         # some meeting minutes don't have descriptions
+    #         if not description:
+    #             description = ""
+    #     else:
+    #         # upcomming meetings don't have descriptions at all
+    #         description = ""
+
+    #     return description
 
     def _parse_classification(self, item):
         """Parse or generate classification from allowed options."""
         # Northwest Home Equity Assurance Program is governing commission appointed by the mayor
         return COMMISSION
 
-    def _parse_start(self, item, isPast, response):
-        """Parse start datetime as a naive datetime object."""
-        """
-        Finding the start datetime is tricky for past meetings.
-        The website doesn't have a constant way of telling date/time.
-        Our methodology uses the meeting's date to search for the meeting in
-        the past meeting sidebar and fetch the time.
-        """
-        if isPast:
-            # sometimes the date is in the title of that Meet Minutes
-            title = item.xpath(".//h2[@class='entry-title']/a/text()").extract()
-            date = title[0].split(" ")[0:3]
+    def _parse_minute_start(self, item, dateString):
+        datetimeFormat = "%m/%d/%Y %I:%M%p"
+        startTimeString = "12:00AM"
 
-            monthNumberString = date[0].lower()
-            monthNumberString = self.calendar.get(monthNumberString)
-            dayString = date[1].replace(",", "")
-            yearString = date[2]
+        # check to see if time is mentioned in description
+        description = item.xpath("./div[@class='entry-content']/p/text()").get()
+        timeStringList = None
+        if description:
+            timeStringList = re.findall(r'\d{1,2}(?:(?:am|pm)|(?::\d{1,2})(?:am|pm)?)', description)
+        # if the time string exists then get the first time
+        if timeStringList:
+            startTimeString = timeStringList[0].upper()
 
-            # if the string fetched is not a month then search for it in the description
-            if not monthNumberString:
-                description = item.xpath("./div[@class='entry-content']/p/text()").get()
-                description = description.split(" ")
-                monthNumberString = ""
+        return datetime.strptime(dateString +  " " + startTimeString, datetimeFormat)
 
-                # check each word in the description if it is a month
-                for i in range(len(description)):
+    # def _parse_start(self, item, isPast, response):
+    #     """Parse start datetime as a naive datetime object."""
+    #     """
+    #     Finding the start datetime is tricky for past meetings.
+    #     The website doesn't have a constant way of telling date/time.
+    #     Our methodology uses the meeting's date to search for the meeting in
+    #     the past meeting sidebar and fetch the time.
+    #     """
+    #     if isPast:
+    #         # sometimes the date is in the title of that Meet Minutes
+    #         title = item.xpath(".//h2[@class='entry-title']/a/text()").extract()
+    #         date = title[0].split(" ")[0:3]
 
-                    if self.calendar.get(description[i].lower()):
-                        monthNumberString += self.calendar[description[i].lower()]
+    #         monthNumberString = date[0].lower()
+    #         monthNumberString = self.calendar.get(monthNumberString)
+    #         dayString = date[1].replace(",", "")
+    #         yearString = date[2]
 
-                        # there are different formatting of month, day, and year
-                        # the day could be before or after the year
-                        if (len(description[i + 1]) >= 4):
-                            dayString = description[i - 1].replace(",", "")
-                            yearString = description[i + 1][:4]
+    #         # if the string fetched is not a month then search for it in the description
+    #         if not monthNumberString:
+    #             description = item.xpath("./div[@class='entry-content']/p/text()").get()
+    #             description = description.split(" ")
+    #             monthNumberString = ""
 
-                        else:
-                            dayString = description[i + 1].replace(",", "")
-                            yearString = description[i + 2][:4]
+    #             # check each word in the description if it is a month
+    #             for i in range(len(description)):
 
-            # in case the day is only a single digit
-            if len(dayString) == 1:
-                dayString = "0" + dayString
+    #                 if self.calendar.get(description[i].lower()):
+    #                     monthNumberString += self.calendar[description[i].lower()]
 
-            # create the complete date string
-            dateStringFourDigit = "/".join([monthNumberString, dayString, yearString])
+    #                     # there are different formatting of month, day, and year
+    #                     # the day could be before or after the year
+    #                     if (len(description[i + 1]) >= 4):
+    #                         dayString = description[i - 1].replace(",", "")
+    #                         yearString = description[i + 1][:4]
 
-            queryString = "//ul[li='" + dateStringFourDigit + "']/li[2]/text()"
+    #                     else:
+    #                         dayString = description[i + 1].replace(",", "")
+    #                         yearString = description[i + 2][:4]
 
-            # search the time in the Past Meeting sidebar
-            timeString = response.xpath(queryString).get()
+    #         # in case the day is only a single digit
+    #         if len(dayString) == 1:
+    #             dayString = "0" + dayString
 
-            # not found then default to 12am
-            if not timeString:
-                timeString = "12:00:00AM"
-            else:
-                timeString = timeString.split(" ")
-                timeString = timeString[0] + ":00" + timeString[1].upper()
+    #         # create the complete date string
+    #         dateStringFourDigit = "/".join([monthNumberString, dayString, yearString])
 
-            dateString = dateStringFourDigit + " " + timeString
-            datetimeFormat = "%m/%d/%Y %H:%M:%S%p"
+    #         queryString = "//ul[li='" + dateStringFourDigit + "']/li[2]/text()"
 
-            start = datetime.strptime(dateString, datetimeFormat)
+    #         # search the time in the Past Meeting sidebar
+    #         timeString = response.xpath(queryString).get()
 
-        else:
-            # getting the time from upcomming events sidebar
-            date = item.xpath("./ul/li/text()")[0].extract()
-            timeSpan = item.xpath("./ul/li/text()")[1].extract()
-            timeArr = timeSpan.split(" ")
-            timeString = timeArr[0] + ":00" + timeArr[1].upper()
+    #         # not found then default to 12am
+    #         if not timeString:
+    #             timeString = "12:00:00AM"
+    #         else:
+    #             timeString = timeString.split(" ")
+    #             timeString = timeString[0] + ":00" + timeString[1].upper()
 
-            dateString = date + " " + timeString
-            datetimeFormat = "%m/%d/%Y %H:%M:%S%p"
+    #         dateString = dateStringFourDigit + " " + timeString
+    #         datetimeFormat = "%m/%d/%Y %H:%M:%S%p"
 
-            start = datetime.strptime(dateString, datetimeFormat)
+    #         start = datetime.strptime(dateString, datetimeFormat)
 
-        return start
+    #     else:
+    #         # getting the time from upcomming events sidebar
+    #         date = item.xpath("./ul/li/text()")[0].extract()
+    #         timeSpan = item.xpath("./ul/li/text()")[1].extract()
+    #         timeArr = timeSpan.split(" ")
+    #         timeString = timeArr[0] + ":00" + timeArr[1].upper()
+
+    #         dateString = date + " " + timeString
+    #         datetimeFormat = "%m/%d/%Y %H:%M:%S%p"
+
+    #         start = datetime.strptime(dateString, datetimeFormat)
+
+    #     return start
+
+    
 
     def _parse_end(self, item, isPast, response):
         """Parse end datetime as a naive datetime object. Added by pipeline if None"""
